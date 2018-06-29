@@ -124,15 +124,14 @@ class Cursor:
                 for j in range(0, bin_entry.RecordCount()):
                     record = []
                     for k in range(0, bin_entry.BinsLength()):
-                        #item_range = self.bins[k][bin_entry.Bins(k) + 1] - self.bins[k][bin_entry.Bins(k)]
                         item_range = self.bin_ranges[k][bin_entry.Bins(k)]
                         value = self.bins[k][bin_entry.Bins(k)] + (random.random() * item_range)
                         record.append(value)
 
                     records.append(record)
 
-                    if len(records) % 1000 == 0:
-                        print('generated ' + str(len(records)) + ' records in ' + str(time.time() - start) + ' seconds')
+                    #if len(records) % 1000 == 0:
+                        #print('generated ' + str(len(records)) + ' records in ' + str(time.time() - start) + ' seconds')
 
             # reset record information
             self.records = records
@@ -140,8 +139,8 @@ class Cursor:
             self.recordCount = len(self.records)
 
         # return record
-        self.recordCount += 1
-        return self.records[self.recordCount - 1]
+        self.recordIndex += 1
+        return self.records[self.recordIndex - 1]
 
 def send(message_type, request, hostname, port):
     context = zmq.Context()
