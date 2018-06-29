@@ -2,7 +2,17 @@
 import flatbuffers
 import zmq
 
+import random
+
 import sketchfs_flatbuffers
+from sketchfs_flatbuffers.com.bushpath.sketchfs.flatbuffers.DhtListRequest import *
+from sketchfs_flatbuffers.com.bushpath.sketchfs.flatbuffers.DhtListResponse import *
+from sketchfs_flatbuffers.com.bushpath.sketchfs.flatbuffers.MessageType import *
+from sketchfs_flatbuffers.com.bushpath.sketchfs.flatbuffers.Node import *
+from sketchfs_flatbuffers.com.bushpath.sketchfs.flatbuffers.SketchShowRequest import *
+from sketchfs_flatbuffers.com.bushpath.sketchfs.flatbuffers.SketchShowResponse import *
+from sketchfs_flatbuffers.com.bushpath.sketchfs.flatbuffers.QueryRequest import *
+from sketchfs_flatbuffers.com.bushpath.sketchfs.flatbuffers.QueryResponse import *
 
 # define sketch record cursor
 class Cursor:
@@ -11,28 +21,126 @@ class Cursor:
         self.port = port
         self.sketch_id = sketch_id
 
-        # send DhtListRequest
+        # create DhtListRequest
         builder = flatbuffers.Builder(1)
+        DhtListRequestStart(builder)
+        root_index = DhtListRequestEnd(builder)
+        builder.Finish(root_index)
+
+        # send DhtListRequest
+        response = send(MessageType.DhtList, builder.Output(), hostname, port)
+        
+        # parse DhtListResponse
+        dht_list_response = DhtListResponse.GetRootAsDhtListResponse(response, 0)
+        nodes = []
+        for i in range(0, dht_list_response.NodesLength()):
+            nodes.append(dht_list_response.Nodes(i))
+
+        # initialize node variables
+        self.nodes = nodes
+        self.nodeIndex = 0
+
+        # create SketchShowRequest
+        ss_builder = flatbuffers.Builder(1)
+        sketch_id_index = ss_builder.CreateString(sketch_id)
+        SketchShowRequestStart(ss_builder)
+        SketchShowRequestAddId(ss_builder, sketch_id_index)
+        ss_root_index = SketchShowRequestEnd(ss_builder)
+        ss_builder.Finish(ss_root_index)
+
+        # send SketchShowRequest
+        ss_response = send(MessageType.SketchShow, ss_builder.Output(),
+            nodes[0].Hostname().decode('utf-8'), nodes[0].DataPort())
+        
+        # parse SketchShowResponse
+        sketch_show_response = \
+            SketchShowResponse.GetRootAsSketchShowResponse(ss_response, 0)
+
+        # intialize bins
+        bins = []
+        sketch = sketch_show_response.Sketch()
+        for i in range(0, sketch.FeaturesLength()):
+            feature = sketch.Features(i)
+
+            binBoundaries = []
+            for j in range(0, feature.ValuesLength()):
+                binBoundaries.append(feature.Values(i))
+
+            bins.append(binBoundaries)
+
+        self.bins = bins
+
+        # initialize record variables
+        self.records = []
+        self.recordIndex = 0
+        self.recordCount = len(self.records)
 
     # returns next record (None if no records remaining)
     def next(self):
-        return None;
+        # if we've returned all the records from the current node
+        while self.recordIndex >= self.recordCount:
+            # if there are no more nodes
+            if self.nodeIndex >= len(self.nodes):
+                return None
+
+            node = self.nodes[self.nodeIndex]
+            self.nodeIndex += 1
+
+            # create QueryRequest 
+            builder = flatbuffers.Builder(1)
+            sketch_id_index = builder.CreateString(self.sketch_id)
+            QueryRequestStart(builder)
+            QueryRequestAddSketchId(builder, sketch_id_index)
+            root_index = QueryRequestEnd(builder)
+            builder.Finish(root_index)
+
+            # send QueryRequest
+            response = send(MessageType.Query, builder.Output(),
+                node.Hostname().decode('utf-8'), node.DataPort())
+
+            # parse QueryResponse
+            query_response = QueryResponse.GetRootAsQueryResponse(response, 0)
+
+            # generate synthetic records
+            self.records = []
+            for i in range(0, query_response.BinEntriesLength()):
+                bin_entry = query_response.BinEntries(i)
+                # generate random records based on bin entries
+                for j in range(0, bin_entry.RecordCount()):
+                    record = []
+                    for k in range(0, bin_entry.BinsLength()):
+                        item_range = self.bins[k][bin_entry.Bins(k) + 1] - self.bins[k][bin_entry.Bins(k)]
+                        #print('range:' + str(item_range))
+                        value = self.bins[k][bin_entry.Bins(k)] + (random.random() * item_range)
+                        #print(value)
+                        record.append(value)
+                        #record.append(self.bins[k][bin_entry.Bins(k)] + (random.random() * item_range))
+                    #print(','.join(map(str, record)))
+                    self.records.append(record)
+
+            # reset record information
+            self.recordIndex = 0
+            self.recordCount = len(self.records)
+
+        # return record
+        self.recordCount += 1
+        return self.records[self.recordCount - 1]
 
 def send(message_type, request, hostname, port):
     context = zmq.Context()
 
     # connect to server
     socket = context.socket(zmq.REQ)
-    socket.connect('tcp://' + hostname + ':' + port)
+    socket.connect('tcp://' + hostname + ':' + str(port))
 
     # send request
-    socket.send(message_type.to_bytes(2), zmq.SNDMORE)
+    socket.send(message_type.to_bytes(2, byteorder='little'), zmq.SNDMORE)
     socket.send(request)
 
     # recv response
     response = socket.recv()
     response = socket.recv()
-    #socket.send(message_type,
+    return response
 
 if __name__ == '__main__':
     # create cursor
@@ -44,4 +152,4 @@ if __name__ == '__main__':
         if record == None:
             break
 
-        print(record)
+        print(','.join(record))
