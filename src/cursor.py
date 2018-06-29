@@ -3,6 +3,7 @@ import flatbuffers
 import zmq
 
 import random
+import time
 
 import sketchfs_flatbuffers
 from sketchfs_flatbuffers.com.bushpath.sketchfs.flatbuffers.DhtListRequest import *
@@ -64,11 +65,24 @@ class Cursor:
 
             binBoundaries = []
             for j in range(0, feature.ValuesLength()):
-                binBoundaries.append(feature.Values(i))
+                binBoundaries.append(feature.Values(j))
 
             bins.append(binBoundaries)
 
         self.bins = bins
+
+        # initialize ranges
+        bin_ranges = []
+        for i in range(0, len(bins)):
+            #print('bin:' + str(i))
+            bin_range_values = []
+            for j in range(0, len(bins[i]) - 1):
+                bin_range_values.append(bins[i][j+1] - bins[i][j])
+                #print('\trange:' + str(bin_range_values[j]))
+
+            bin_ranges.append(bin_range_values)
+
+        self.bin_ranges = bin_ranges
 
         # initialize record variables
         self.records = []
@@ -102,23 +116,26 @@ class Cursor:
             query_response = QueryResponse.GetRootAsQueryResponse(response, 0)
 
             # generate synthetic records
-            self.records = []
+            records = []
+            start = time.time()
             for i in range(0, query_response.BinEntriesLength()):
                 bin_entry = query_response.BinEntries(i)
                 # generate random records based on bin entries
                 for j in range(0, bin_entry.RecordCount()):
                     record = []
                     for k in range(0, bin_entry.BinsLength()):
-                        item_range = self.bins[k][bin_entry.Bins(k) + 1] - self.bins[k][bin_entry.Bins(k)]
-                        #print('range:' + str(item_range))
+                        #item_range = self.bins[k][bin_entry.Bins(k) + 1] - self.bins[k][bin_entry.Bins(k)]
+                        item_range = self.bin_ranges[k][bin_entry.Bins(k)]
                         value = self.bins[k][bin_entry.Bins(k)] + (random.random() * item_range)
-                        #print(value)
                         record.append(value)
-                        #record.append(self.bins[k][bin_entry.Bins(k)] + (random.random() * item_range))
-                    #print(','.join(map(str, record)))
-                    self.records.append(record)
+
+                    records.append(record)
+
+                    if len(records) % 1000 == 0:
+                        print('generated ' + str(len(records)) + ' records in ' + str(time.time() - start) + ' seconds')
 
             # reset record information
+            self.records = records
             self.recordIndex = 0
             self.recordCount = len(self.records)
 
@@ -152,4 +169,4 @@ if __name__ == '__main__':
         if record == None:
             break
 
-        print(','.join(record))
+        #print(','.join(record))
